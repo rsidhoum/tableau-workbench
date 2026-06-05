@@ -77,16 +77,16 @@ let make_token ttype self = function
             begin match ttype with
             |TExpr -> Gramext.Slist1sep (
                         Gramext.Snterm (create_obj (ExprEntry.get_entry s)),
-                        Gramext.Stoken ("", ";"))
+                        Gramext.Stoken ("", ";"), false)
             |TPatt -> Gramext.Slist1sep (
                         Gramext.Snterm (create_obj (PattEntry.get_entry s)),
-                        Gramext.Stoken ("", ";"))
+                        Gramext.Stoken ("", ";"), false)
             |TExprSchema -> Gramext.Slist1sep (
                         Gramext.Snterm (create_obj (ExprSchemaEntry.get_entry s)),
-                        Gramext.Stoken ("", ";"))
+                        Gramext.Stoken ("", ";"), false)
             |TPattSchema -> Gramext.Slist1sep (
                         Gramext.Snterm (create_obj (PattSchemaEntry.get_entry s)),
-                        Gramext.Stoken ("", ";"))
+                        Gramext.Stoken ("", ";"), false)
             | _ -> assert(false)
             end
 (*    |Symbol(s) when Hashtbl.mem symbol_table s ->
@@ -274,15 +274,23 @@ let make_entry_patt_schema self token_list =
 
 let extend_schema = 
     let aux1 s sep =
+        let parse_sep strm =
+            match Stream.peek strm with
+            |Some (_, token) when token = sep -> Stream.junk strm; token
+            |_ -> raise Stream.Failure
+        in
+        let sep_entry =
+            Grammar.Entry.of_parser Pcaml.gram (new_id "separator") parse_sep
+        in
         EXTEND
         expr_expr: [
-            [ex = Pcaml.expr; $sep$; sc = formula_expr -> <:expr< ($ex$,$sc$) >>]];
+            [ex = Pcaml.expr; sep_entry; sc = formula_expr -> <:expr< ($ex$,$sc$) >>]];
         expr_patt: [
-            [pa = Pcaml.patt; $sep$; sc = formula_patt -> <:patt< ($pa$,$sc$) >>]];
+            [pa = Pcaml.patt; sep_entry; sc = formula_patt -> <:patt< ($pa$,$sc$) >>]];
 
-        expr_expr_schema: [[ex = Pcaml.expr; $sep$; sc = formula_expr_schema ->
+        expr_expr_schema: [[ex = Pcaml.expr; sep_entry; sc = formula_expr_schema ->
                     Ast.ExLabt(loc,(s,ex),sc)]];
-        expr_patt_schema: [[pa = Pcaml.patt; $sep$; sc = formula_patt_schema ->
+        expr_patt_schema: [[pa = Pcaml.patt; sep_entry; sc = formula_patt_schema ->
                     Ast.PaLabt((s,pa),sc)]];
         END
     in
@@ -514,16 +522,19 @@ let extgramm gramms =
 let expand_constructors = 
     List.iter (fun (id,_) -> expand_expr_constructor id )
 
-let make_type_decl loc tyv cty ctyl =
-  { MLast.tdNam = loc;
-    MLast.tdPrm = tyv;
-    MLast.tdPrv = true;
+let make_type_decl (loc, name) tyv cty ctyl =
+  let typevars =
+      List.map (fun (id, _) -> (vala (Some id), None)) tyv
+  in
+  { MLast.tdNam = vala (loc, vala name);
+    MLast.tdPrm = vala typevars;
+    MLast.tdPrv = vala true;
     MLast.tdDef = cty;
-    MLast.tdCon = ctyl }
+    MLast.tdCon = vala ctyl }
 
 let expand_grammar_type (id,rules) =
     let typevars = ref [(id,(false,false))] in
-    let exptype = function
+    let open_type = function
         |Lid(s)  when s = id -> <:ctyp< '$s$ >>
         |List(s) when s = id -> <:ctyp< list '$s$ >>
         |Lid(s)  -> typevars := (s,(false,false))::!typevars ; <:ctyp< '$s$ >>
@@ -532,11 +543,19 @@ let expand_grammar_type (id,rules) =
         |Const(s) -> <:ctyp< [= `$s$ ] >>
         |_ -> assert(false)
     in
-    let aux = function
+    let closed_type = function
+        |Lid(s) -> <:ctyp< $lid:s$ >>
+        |List(s) -> <:ctyp< list $lid:s$ >>
+        |Atom -> <:ctyp< [= `Atom of string ] >>
+        |Const(s) -> <:ctyp< [= `$s$ ] >>
+        |_ -> assert(false)
+    in
+    let build_fields inherited_type exptype =
+      let aux = function
         |[Lid("")] -> None
-        |[Lid(s)] -> typevars := (s,(false,false))::!typevars ; (* XXX  don't like this *)
-                     Some("",[<:ctyp< $lid:s^"_open"$ '$s$ >>])
-        |[Type(t);Symbol(":");Lid(s)]  -> Some("",[<:ctyp< ($exptype t$ * '$s$) >>])
+        |[Lid(s)] -> Some("",[inherited_type s])
+        |[Type(t);Symbol(":");Lid(s)] ->
+                Some("",[<:ctyp< ($exptype t$ * $exptype (Lid s)$) >>])
         |[Atom] -> Some("Atom",[<:ctyp< string >>])
         |[Const(s)] -> Some(s,[])
         |Symbol("(") :: _ -> None
@@ -546,32 +565,28 @@ let expand_grammar_type (id,rules) =
                     |t -> Some(exptype t)
                     ) l
                 in Some(new_conn l,List.rev args)
-    in
-    let fields = 
+      in
         match List.rev (filter_map aux rules) with
         |[] -> assert(false)
         |l ->
             let aux = function
-                |("", [t]) -> MLast.PvInh t
-                |(id, []) -> MLast.PvInh <:ctyp< [= `$id$ ] >>
-                |(id, args) -> MLast.PvInh <:ctyp< [= `$id$ of ($list:args$) ] >>
+                |("", [t]) -> MLast.PvInh (loc, t)
+                |(id, []) -> MLast.PvInh (loc, <:ctyp< [= `$id$ ] >>)
+                |(id, args) -> MLast.PvInh (loc, <:ctyp< [= `$id$ of ($list:args$) ] >>)
             in
             let l = List.map aux l
             in <:ctyp< [= $list:l$ ] >>
     in
-    let closetype =
-        let tvl = List.map(function
-            |(t,_) when t = id -> <:ctyp< '$t$ >>
-            |(t,_) -> <:ctyp< $lid:t$ >>
-            ) (unique !typevars) 
-        in 
-        let t = List.fold_left (fun acc e ->
-            <:ctyp< $acc$ $e$ >>
-            ) <:ctyp< $lid:id^"_open"$ >> tvl
-        in <:ctyp< ( $t$ as '$id$) >>
+    let open_inherited_type s =
+        typevars := (s,(false,false))::!typevars;
+        <:ctyp< $lid:s^"_open"$ '$s$ >>
+    in
+    let fields = build_fields open_inherited_type open_type in
+    let closed_fields =
+        build_fields (fun s -> <:ctyp< $lid:s$ >>) closed_type
     in
     let t1 = make_type_decl (loc,id^"_open") (unique !typevars) fields [] in
-    let t2 = make_type_decl (loc,id) [] closetype [] in
+    let t2 = make_type_decl (loc,id) [] closed_fields [] in
     [t1;t2]
 
 let rec expand_grammar_expr_type = function
@@ -619,18 +634,18 @@ let expand_printer gramm =
     let aux (name,rules) = 
         let gen_pel = function
             |[Atom] ->
-                    Some(<:patt< `Atom( a ) >>,None,
+                    Some(<:patt< `Atom( a ) >>,vala None,
                     <:expr< Printf.sprintf "%s" a >>)
             |[Const(s)] -> 
-                    Some(<:patt< `$s$ >>,None,
+                    Some(<:patt< `$s$ >>,vala None,
                     <:expr< Printf.sprintf $str:s$  >>)
             |[Lid("")] |[Type(_)] |[Patt] |[Expr] 
             |Symbol("("):: _ -> None
             |[Lid(id)] ->
-                    Some(<:patt< ( #$list:[id]$ as f ) >>,None,
+                    Some(<:patt< ( #$list:[id]$ as f ) >>,vala None,
                      <:expr< $lid:id^"_printer"$ f >>)
             |Type(_) :: Symbol(":") :: Lid(id) :: _ ->
-                    Some(<:patt< (_,f) >>,None,
+                    Some(<:patt< (_,f) >>,vala None,
                      <:expr< $lid:id^"_printer"$ f >>)
             |tl ->
                     let f =
@@ -660,7 +675,7 @@ let expand_printer gramm =
                     in 
                     let id = new_conn tl in
                     Some(
-                        <:patt< `$id$($list:pal$) >>,None,
+                        <:patt< `$id$($list:pal$) >>,vala None,
                         List.fold_left (fun a e ->
                             <:expr< $a$ $e$ >>
                         ) <:expr< Printf.sprintf $str:"("^f^")"$  >> exl
@@ -673,7 +688,7 @@ let expand_printer gramm =
 let expand_ast2input gramm =
     let aux (name,rules) = 
         let gen_pel = function
-            |[Atom] -> Some(<:patt< Ast.ExAtom a >>,None, <:expr< `Atom a >>)
+            |[Atom] -> Some(<:patt< Ast.ExAtom a >>,vala None, <:expr< `Atom a >>)
             |[Const(_)] |[Lid(_)] |[Type(_)] |[Patt] |[Expr] 
             |Type(_) :: Symbol(":") :: _
             |Symbol("("):: _ -> None
@@ -700,18 +715,18 @@ let expand_ast2input gramm =
                     in 
                     let id = new_conn tl in
                     Some(
-                        <:patt< Ast.ExConn($str:id$,$list_to_pattlist pal$) >>,None,
+                        <:patt< Ast.ExConn($str:id$,$list_to_pattlist pal$) >>,vala None,
                         <:expr< `$id$($list:exl$) >>
                         )
         in
         let const = Hashtbl.fold( fun k (l,o) acc ->
             if l = name && o = "formula" then
                 (<:patt< Ast.ExCons($str:k$) >>,
-                None,<:expr< `$k$>>)::acc
+                vala None,<:expr< `$k$>>)::acc
             else acc
             ) const_table []
         in
-        let def = <:patt< _ >>, None, <:expr< assert(False) >> in
+        let def = <:patt< _ >>, vala None, <:expr< assert(False) >> in
         (<:patt< $lid:name^"_ast2input"$ >>,
         <:expr< fun [ $list:(filter_map gen_pel rules)@const@[def]$ ] >>)
     in <:str_item< value rec $list:List.map aux gramm$ >>

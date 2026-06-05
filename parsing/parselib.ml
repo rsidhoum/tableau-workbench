@@ -27,6 +27,12 @@ let filter_map f l =
                 end
     in aux [] f l
 
+let vala value = Ploc.VaVal value
+
+let unvala = function
+    |Ploc.VaVal value -> value
+    |Ploc.VaAnt _ -> assert(false)
+
 let list_to_exprlist l =
     List.fold_right (
         fun x l -> <:expr< [ $x$ :: $l$ ] >>

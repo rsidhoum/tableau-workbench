@@ -3,6 +3,9 @@ OCAMLC   = @OCAMLC@
 OCAMLOPT = @OCAMLOPT@
 OCAMLLIB = @OCAMLLIB@
 OCAMLVERSION = @OCAMLVERSION@
+TOOLCHAIN_BINDIR = @TOOLCHAIN_BINDIR@
+
+PATH := $(TOOLCHAIN_BINDIR):$(PATH)
 
 prefix=@prefix@
 exec_prefix=@exec_prefix@
@@ -18,7 +21,7 @@ OCAMLMAKEFILE=@OCAMLPATH@/utils/OCamlMakefile
 # as fast as we can !
 #OCAMLFLAGS=-unsafe -noassert
 OCAMLPATH=@OCAMLPATH@
-export OCAMLMAKEFILE OCAMLFLAGS OCAMLPATH
+export OCAMLMAKEFILE OCAMLFLAGS OCAMLPATH PATH
 
 TARGETS=@TARGETS@
 
@@ -40,11 +43,11 @@ cgi:
 provers: library/pc.ml library/k.ml library/kt.ml library/s4.ml library/pltl.ml
 	ranlib @OCAMLPATH@/twb/*.a
 	cd library && \
-	    ../utils/twbcompile pc.twb pc.ml && \
-	    ../utils/twbcompile k.twb k.ml && \
-	    ../utils/twbcompile kt.twb kt.ml && \
-	    ../utils/twbcompile s4.twb s4.ml && \
-	    ../utils/twbcompile pltl.twb pltl.ml
+	    ../utils/twbcompile pc.ml && \
+	    ../utils/twbcompile k.ml && \
+	    ../utils/twbcompile kt.ml && \
+	    ../utils/twbcompile s4.ml && \
+	    ../utils/twbcompile pltl.ml
 
 clean:
 	cd visit && make clean
@@ -98,4 +101,3 @@ config.status:
 
 configure: configure.in
 	autoconf
-

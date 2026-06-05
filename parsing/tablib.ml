@@ -30,18 +30,18 @@ let rec extract_ex_term_vars acc = function
 
 let rec extract_patt_vars acc = function
     |MLast.PaAny(_)   -> acc 
-    |MLast.PaLid(_,s) -> (String.lowercase s)::acc
-    |MLast.PaVrn(_,s) -> (String.lowercase s)::acc
-    |MLast.PaTup(_,l) -> (List.flatten (List.map (extract_patt_vars []) l)) @ acc 
-    |MLast.PaArr(_,l) -> (List.flatten (List.map (extract_patt_vars []) l)) @ acc
+    |MLast.PaLid(_,s) -> (String.lowercase (unvala s))::acc
+    |MLast.PaVrn(_,s) -> (String.lowercase (unvala s))::acc
+    |MLast.PaTup(_,l) -> (List.flatten (List.map (extract_patt_vars []) (unvala l))) @ acc
+    |MLast.PaArr(_,l) -> (List.flatten (List.map (extract_patt_vars []) (unvala l))) @ acc
     |_ -> acc
 
 let rec extract_expr_vars acc = function
-    |MLast.ExLid(_,s) -> (String.lowercase s)::acc
-    |MLast.ExVrn(_,s) -> (String.lowercase s)::acc
-    |MLast.ExTup(_,l) -> (List.flatten (List.map (extract_expr_vars []) l)) @ acc 
-    |MLast.ExArr(_,l) -> (List.flatten (List.map (extract_expr_vars []) l)) @ acc
-    |MLast.ExSeq(_,l) -> (List.flatten (List.map (extract_expr_vars []) l)) @ acc
+    |MLast.ExLid(_,s) -> (String.lowercase (unvala s))::acc
+    |MLast.ExVrn(_,s) -> (String.lowercase (unvala s))::acc
+    |MLast.ExTup(_,l) -> (List.flatten (List.map (extract_expr_vars []) (unvala l))) @ acc
+    |MLast.ExArr(_,l) -> (List.flatten (List.map (extract_expr_vars []) (unvala l))) @ acc
+    |MLast.ExSeq(_,l) -> (List.flatten (List.map (extract_expr_vars []) (unvala l))) @ acc
     |MLast.ExApp(_,e1,e2) -> (extract_expr_vars [] e1) @ (extract_expr_vars [] e2)
     |_ -> acc
 
@@ -80,12 +80,12 @@ let pa_expr_to_string =
 let ctyp_to_patt ctyp =
     let counter = ref 0 in
     let rec aux = function
-        |MLast.TyTup(_,l)  -> <:patt< ($list:List.map aux l$) >>
+        |MLast.TyTup(_,l)  -> <:patt< ($list:List.map aux (unvala l)$) >>
         |MLast.TyLid(_,id) ->
                 incr counter; 
                 <:patt< $lid:"__t"^string_of_int !counter$ >>
         |MLast.TyAcc(_,_,ctyp) -> aux ctyp
-        |MLast.TyApp(_,MLast.TyLid(_,"list"),ctyp) -> aux ctyp
+        |MLast.TyApp(_,MLast.TyLid(_,id),ctyp) when unvala id = "list" -> aux ctyp
         |_ -> assert(false)
     in aux ctyp
 
@@ -93,10 +93,9 @@ let ctyp_to_method_expr m ctyp =
     let counter = ref 0 in
     let rec aux = function
         |MLast.TyTup(_,l)  ->
-                <:expr< ($list:List.map aux l$) >>
-        |MLast.TyLid(_,"int")
-        |MLast.TyLid(_,"bool")
-        |MLast.TyLid(_,"string") -> 
+                <:expr< ($list:List.map aux (unvala l)$) >>
+        |MLast.TyLid(_,id) when
+                List.mem (unvala id) ["int"; "bool"; "string"] ->
                 incr counter; 
                 <:expr< $lid:"__t"^string_of_int !counter$ >>
         |MLast.TyLid(_,id) ->
@@ -106,7 +105,7 @@ let ctyp_to_method_expr m ctyp =
                 |_ -> <:expr< $lid:"__t"^string_of_int !counter$#$lid:m$ >>
                 end
         |MLast.TyAcc(_,_,ctyp) -> aux ctyp
-        |MLast.TyApp(_,MLast.TyLid(_,"list"),ctyp) -> aux ctyp
+        |MLast.TyApp(_,MLast.TyLid(_,id),ctyp) when unvala id = "list" -> aux ctyp
         |_ -> assert(false) 
     in aux ctyp
 
@@ -114,17 +113,21 @@ let expand_history_type histlist =
     let ctyp_to_string_expr ctyp =
         let counter = ref 0 in
         let rec aux1 s = function
-            |MLast.TyLid(_,"int") -> <:expr< string_of_int $lid:s$ >>
-            |MLast.TyLid(_,"string") -> <:expr< $lid:s$ >>
-            |MLast.TyLid(_,"bool") -> <:expr< string_of_bool $lid:s$ >>
+            |MLast.TyLid(_,id) when unvala id = "int" ->
+                    <:expr< string_of_int $lid:s$ >>
+            |MLast.TyLid(_,id) when unvala id = "string" ->
+                    <:expr< $lid:s$ >>
+            |MLast.TyLid(_,id) when unvala id = "bool" ->
+                    <:expr< string_of_bool $lid:s$ >>
             |MLast.TyLid(_,_) -> <:expr< $lid:s$#to_string >>
-            |MLast.TyApp(_,MLast.TyLid(_,"list"),ctyp) ->
+            |MLast.TyApp(_,MLast.TyLid(_,id),ctyp) when unvala id = "list" ->
                     <:expr< List.fold_left (fun s e -> 
                         s^ ($aux1 "e" ctyp$)) "" $lid:s$ >>
             |MLast.TyAcc(_,_,ctyp) -> <:expr< $lid:s$#to_string >>
             |_ -> assert(false)
         and aux2 = function
             |MLast.TyTup(_,l)  ->
+                    let l = unvala l in
                     let f = List.fold_left (fun acc _ -> acc^",%s") "" l in
                     List.fold_left (fun acc arg ->
                         <:expr< $acc$ $arg$ >>
@@ -158,13 +161,13 @@ let expand_history_type histlist =
     in
     let copylist =
         List.map (fun (id,var,ctyp,ex) ->
-            (<:patt< `$var$ $ctyp_to_patt ctyp$ >> , None, 
+            (<:patt< `$var$ $ctyp_to_patt ctyp$ >> , vala None,
             <:expr< `$var$ $ctyp_to_method_expr "copy" ctyp$ >>)
         ) histlist
     in
     let to_stringlist = 
         List.map (fun (id,var,ctyp,ex) ->
-            (<:patt< `$var$ $ctyp_to_patt ctyp$ >> , None, 
+            (<:patt< `$var$ $ctyp_to_patt ctyp$ >> , vala None,
             <:expr< $ctyp_to_string_expr ctyp$ >>)
         ) histlist
     in 
@@ -219,7 +222,7 @@ let expand_histories =
 let expand_principal pa_expr =
     let (idlist,termlist) = List.split (extract_pa_expr_vars pa_expr) in
     let act =
-        ((expand_pa_expr pa_expr), None,
+        ((expand_pa_expr pa_expr), vala None,
         <:expr<
             List.map2
             (fun f s ->
@@ -228,7 +231,7 @@ let expand_principal pa_expr =
             ) $list_to_exprlist termlist$ $list_to_exprlist idlist$
         >>)
     in
-    let def = (<:patt< _ >>, None, <:expr< raise FailedMatch >>) in
+    let def = (<:patt< _ >>, vala None, <:expr< raise FailedMatch >>) in
     let l = if pa_expr_is_var pa_expr then [act] else [act;def] in
     <:expr<
     fun sbl -> fun fl ->
@@ -261,8 +264,8 @@ let expand_set pa_expr =
         |_ -> assert(false) 
     in
     let exl =
-         let ex = (expand_pa_expr pa_expr,None,aux (idlist,termlist)) in
-         let def = (<:patt< _ >>, None, <:expr< raise FailedMatch >>) in
+         let ex = (expand_pa_expr pa_expr,vala None,aux (idlist,termlist)) in
+         let def = (<:patt< _ >>, vala None, <:expr< raise FailedMatch >>) in
          if pa_expr_is_var pa_expr then [ex] else [ex;def]
     in
     <:expr<
@@ -929,7 +932,7 @@ let expand_preamble () =
     let sblprint = 
         List.fold_left (fun acc s ->
             let ss = Str.global_substitute (Str.regexp " +") (fun _ -> "") s in
-            (<:patt< `$String.capitalize ss$ f >>, None, 
+            (<:patt< `$String.capitalize ss$ f >>, vala None,
             <:expr< $lid:ss^"_printer"$ f >>)::acc
         ) [] l
     in
@@ -1015,13 +1018,13 @@ let expand_matchpatt rulelist =
                         match pa_expr_to_patt pa_expr with
                         |None -> None
                         |Some(pa) ->
-                                Some(pa,None,<:expr< $str:pa_expr_to_string pa_expr$ >>)
+                                Some(pa,vala None,<:expr< $str:pa_expr_to_string pa_expr$ >>)
                     ) (get_schema rule)
                 ) rulelist
             )
         )))
     in
-    let def = <:patt< f >>, None,
+    let def = <:patt< f >>, vala None,
     <:expr< failwith ("no rule matches this formula"^(expr_printer f)) >> in
     <:str_item< value match_schema = fun [ $list:pel@[def]$ ] >>
 
@@ -1112,9 +1115,9 @@ let expand_main () =
                 with Not_found -> assert(false)
             in
             let pel = 
-                let e = <:patt< `$var$ s >>,None,<:expr< s >> in
+                let e = <:patt< `$var$ s >>,vala None,<:expr< s >> in
                 if Hashtbl.length vars_table > 1 then
-                    [e;(<:patt< _ >>, None, <:expr< assert(False) >>)]
+                    [e;(<:patt< _ >>, vala None, <:expr< assert(False) >>)]
                 else [e]
             in
             let ex = <:expr< fun [node -> 
@@ -1165,4 +1168,3 @@ let expand_source m =
     (* XXX Idea: type definitions could be dumped in a different compilation
      * module. then expand_source will basically only extend the grammar and
      * open the type def module *)
-

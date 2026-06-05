@@ -1,60 +1,48 @@
+Tableau Workbench
+=================
 
-Pre-Requesites
-==============
+The current build requires:
 
-To install and run the TWB is essential to have the following 
-software installed on the system
+- OCaml 4.12.x
+- Findlib
+- ExtLib
+- Camlp5 7.14
 
-1- ocaml compiler version 3.09.2
-2- findlib
-3- extlib
+Recommended OPAM setup
+======================
 
-1- the ocaml compiler can be downloaded from:
-   http://caml.inria.fr/ocaml/index.en.html
+Create the build switch and install the dependencies:
 
-   Ocaml is avalaible for a range of gnu/linux distribution
-   http://caml.inria.fr/ocaml/release.en.html
+    opam switch create tableau-workbench ocaml-base-compiler.4.12.1
+    opam install --switch=tableau-workbench ocamlfind extlib camlp5.7.14
 
-   MacOsX users can install ocaml via fink/apt (unstable)
-   or using the pre-compiled image from the inria page above.
-   See this page for help:
-   http://wiki.cocan.org/getting_started_with_ocaml_on_mac_os_x
+Configure and build TWB:
 
-   Ocaml is also avalaible via GODI: http://godi.ocaml-programming.de/
-   
-2- findlib can be downloaded from:
-   http://www.ocaml-programming.de/programming/findlib.html
+    opam exec --switch=tableau-workbench -- ./configure
+    make
 
-   findlib is avalaible in pre-compiled format for a range
-   of gnu/linux distribution. the findlib package in debian Gnu/linux
-   is called ocaml-findlib
+The generated Makefile records the selected OPAM toolchain, so subsequent
+`make` commands do not depend on which switch is active in the current shell.
 
-   findlib is also avalaible via GODI: http://godi.ocaml-programming.de/
-   MacOsX users can install findlib either manually or via godi as
-   findlib is not avalaible via fink/apt
+Build and test the bundled provers
+==================================
 
-3- extlib library can be downloaded from
-   http://ocaml-lib.sourceforge.net/
+Build the propositional and modal logic provers:
 
-   extlib is avalaible in pre-compiled format for a range 
-   of gnu/linux distribution. the extlib package in debian Gnu/linux
-   is called libextlib-ocaml-dev.
+    make provers
 
-   MacOsX users can install findlib via fink/apt (unstable)
-   the name of the package is ocaml-lib.
+For example, run the propositional prover with:
 
-Basic Installation
-==================
+    printf 'p v ~ p\n' | ./library/pc.twb
 
-To install the TWB, the shell commands 
-`./configure; make; make install' should
-configure, build, and install this package.
+The generated prover executables are written to `library/`.
 
-The install script will install the TWB libraries in your ocaml
-directory, and few example scripts in the directory /usr/bin.
+Installation
+============
 
-You can specify a different installation path via the option
---prefix . However notice that in this case you must set the 
-environment variable OCAMLPATH (used by the findlib library) to
-locate the directory where the TWB libraries are installed.
+To install the compiler and library files:
 
+    make install
+
+Depending on the selected installation prefix, this may require appropriate
+filesystem permissions.

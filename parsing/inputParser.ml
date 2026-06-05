@@ -58,7 +58,7 @@ module Make(T:S) = struct
         |Lid(s) -> Gramext.Snterm (create_obj (ExprEntry.get_entry s))
         |List(s) -> Gramext.Slist1sep (
             Gramext.Snterm (create_obj (ExprEntry.get_entry s)),
-            Gramext.Stoken ("", ";"))
+            Gramext.Stoken ("", ";"), false)
         |Symbol(s) -> Gramext.Stoken ("", s)
         |Const(s) ->  Gramext.Stoken ("", s)
         |_ -> failwith "make_token input"
@@ -128,7 +128,7 @@ module Make(T:S) = struct
             filter_map (function
                 |Type(_) -> Some(Gramext.Slist0sep (
                         Gramext.Snterm (create_obj formula_expr_schema),
-                        Gramext.Stoken ("", ";"))
+                        Gramext.Stoken ("", ";"), false)
                         )
                 |Symbol(s) -> Some(Gramext.Stoken ("", s))
                 |_ -> None

@@ -53,6 +53,16 @@ let print_verbose fmt_etc =
     in
     Printf.ksprintf print fmt_etc
 
+let run cmd =
+    match system cmd with
+    |WEXITED 0 -> ()
+    |WEXITED code ->
+            failwith (Printf.sprintf "command exited with status %d: %s" code cmd)
+    |WSIGNALED signal ->
+            failwith (Printf.sprintf "command killed by signal %d: %s" signal cmd)
+    |WSTOPPED signal ->
+            failwith (Printf.sprintf "command stopped by signal %d: %s" signal cmd)
+
 let str_lib_loc =
     try Findlib.package_directory "str"
     with No_such_package (p,i) -> failwith p^i
@@ -108,7 +118,7 @@ let pp filename =
        tmp_dir ^ filename
    in
    print_verbose "%s\n" cmd;
-   ignore(system cmd);
+   run cmd;
    print_verbose "Done.\n"
  
 let rec get_line ch () =
@@ -133,20 +143,48 @@ let rec loop ch l =
         loop ch (dl@l) 
     with End_of_file |Stream.Failure -> l
 
+let read_native_dependencies filename =
+    let fc = open_in filename in
+    let buffer = Buffer.create 256 in
+    let rec read () =
+        try
+            Buffer.add_string buffer (input_line fc);
+            Buffer.add_char buffer ' ';
+            read ()
+        with End_of_file -> close_in fc
+    in
+    read ();
+    let output =
+        Str.global_replace (Str.regexp "\\\\") " " (Buffer.contents buffer)
+    in
+    let dependencies =
+        try
+            let separator = String.index output ':' in
+            String.sub output (separator + 1) (String.length output - separator - 1)
+        with Not_found -> ""
+    in
+    List.fold_right (fun dependency acc ->
+        if Filename.check_suffix dependency ".cmx" then
+            Filename.chop_extension dependency :: acc
+        else
+            acc
+    ) (Str.split (Str.regexp "[ \t\r\n]+") dependencies) []
+
 let rec uniq = function
     |[] -> []
     |h::t -> h:: uniq (List.filter (fun x -> not(x = h)) t)
 
 let rec deps deplist filename =
     let cmd = Printf.sprintf 
-       "ocamldep %s%s > %s%s.deps.txt"
+       "ocamldep -native %s%s > %s%s.deps.txt"
        tmp_dir filename tmp_dir filename
     in
     pp filename;
-    ignore(system cmd);
-    let fc = open_in (tmp_dir ^ filename ^ ".deps.txt") in
-    let ch = read_lines fc in
-    let l = List.filter (fun f -> not(List.mem f deplist)) (loop ch []) in
+    run cmd;
+    let l =
+        List.filter (fun f -> not(List.mem f deplist))
+            (read_native_dependencies (tmp_dir ^ filename ^ ".deps.txt"))
+    in
     let ol = List.map (fun f -> deps (f::deplist) (f^".ml") ) l in
     List.append deplist (List.flatten ol)
 
@@ -184,7 +222,7 @@ let compile_quite filename deplist =
     pkgs dl cgi output
     in
     print_verbose "Compiling: %s\n" cmd;
-    ignore(system cmd);
+    run cmd;
     print_verbose "Done.\n"
 
 let main () =
